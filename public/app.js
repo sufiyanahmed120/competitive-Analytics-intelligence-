@@ -45,17 +45,63 @@ $("#themeBtn").addEventListener("click", () => {
   if (currentReport) renderReport(currentReport);
 });
 
+// ---------- API keys (bring your own key) ----------
+// Keys live only in these inputs unless the visitor opts in to "Remember", which uses this browser's localStorage.
+const KEYS_STORE = "rivalscope.keys";
+const keyInputs = { claude: $("#claudeKey"), gemini: $("#geminiKey") };
+
+function userKeys() {
+  return { claude: keyInputs.claude.value.trim(), gemini: keyInputs.gemini.value.trim() };
+}
+const hasUserKey = () => Object.values(userKeys()).some(Boolean);
+
+function persistKeys() {
+  try {
+    if ($("#rememberKeys").checked) localStorage.setItem(KEYS_STORE, JSON.stringify(userKeys()));
+    else localStorage.removeItem(KEYS_STORE);
+  } catch {}
+}
+function refreshKeysState() {
+  const k = userKeys();
+  const added = [k.claude && "Claude", k.gemini && "Gemini"].filter(Boolean);
+  const el = $("#keysState");
+  el.textContent = added.length ? `✓ ${added.join(" → ")} key added` : (liveMode ? "optional — server keys are set" : "required for live analysis");
+  el.classList.toggle("keys-ok", added.length > 0);
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(KEYS_STORE) || "null");
+  if (saved) {
+    keyInputs.claude.value = saved.claude || "";
+    keyInputs.gemini.value = saved.gemini || "";
+    $("#rememberKeys").checked = true;
+  }
+} catch {}
+Object.values(keyInputs).forEach((input) => input.addEventListener("input", () => { persistKeys(); refreshKeysState(); }));
+$("#rememberKeys").addEventListener("change", persistKeys);
+$("#clearKeys").addEventListener("click", () => {
+  keyInputs.claude.value = "";
+  keyInputs.gemini.value = "";
+  $("#rememberKeys").checked = false;
+  persistKeys();
+  refreshKeysState();
+});
+
 // ---------- status ----------
 fetch("/api/status").then((r) => r.json()).then((s) => {
+  // liveMode = the server has its own keys (local/private use). Otherwise visitors bring their own.
   liveMode = s.live;
   const pill = $("#modePill");
   const chain = (s.providers || []).map((p) => p.label).join(" → ");
-  pill.textContent = s.live ? `Live AI · ${chain}` : "Demo mode";
-  pill.title = (s.providers || []).map((p) => `${p.label}: ${p.model}`).join("\n");
+  pill.textContent = s.live ? `Live AI · ${chain}` : "Bring your own API key";
+  pill.title = s.live
+    ? (s.providers || []).map((p) => `${p.label}: ${p.model}`).join("\n")
+    : (s.supported || []).map((p) => `${p.label}: ${p.model}`).join("\n");
   pill.className = `pill ${s.live ? "live" : "demo"}`;
   $("#modeHint").textContent = s.live
-    ? `Uses live web search. A full analysis takes about 1–3 minutes.${s.providers.length > 1 ? ` If ${s.providers[0].label} fails, ${s.providers.slice(1).map((p) => p.label).join(", ")} takes over automatically.` : ""}`
-    : "Demo mode: add ANTHROPIC_API_KEY and/or GEMINI_API_KEY to your .env file and restart the server to analyze real businesses. You can still view the sample report.";
+    ? "Uses live web search. A full analysis takes about 3–5 minutes. You can also run it on your own key below."
+    : "Add your Claude and/or Gemini API key above to run a live analysis (about 3–5 minutes). Or view the sample report — no key needed.";
+  if (!s.live && !hasUserKey()) $("#keysBox").open = true;
+  refreshKeysState();
 }).catch(() => { $("#modePill").textContent = "Offline"; });
 
 // ---------- recent (browser-only convenience) ----------
@@ -98,10 +144,14 @@ function setStep(stage) {
 $("#form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.target));
-  if (!liveMode) {
-    alert("Demo mode: add ANTHROPIC_API_KEY and/or GEMINI_API_KEY in the .env file and restart the server to run live analyses. Showing the sample report instead.");
-    return showSample();
+  if (!liveMode && !hasUserKey()) {
+    $("#keysBox").open = true;
+    keyInputs.claude.focus();
+    alert("Add your Claude or Gemini API key in the \"Your API keys\" section to run a live analysis. You can also view the sample report without a key.");
+    return;
   }
+  // Keys go in the request body only (never in the URL), and only when the visitor entered them.
+  if (hasUserKey()) data.apiKeys = userKeys();
   await runAnalysis(data);
 });
 

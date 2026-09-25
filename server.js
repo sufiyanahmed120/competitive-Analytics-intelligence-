@@ -3,14 +3,33 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sampleReport } from "./sample.js";
-import { claude } from "./providers/claude.js";
-import { gemini } from "./providers/gemini.js";
+import { claudeInfo, createClaude } from "./providers/claude.js";
+import { geminiInfo, createGemini } from "./providers/gemini.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
-// Tried in this order; a provider without an API key is skipped.
-const PROVIDERS = [claude, gemini].filter((p) => p.enabled);
+// Fallback order. Each entry builds a provider for a given key (or the server key when none is given).
+const PROVIDER_TYPES = [
+  { info: claudeInfo, create: createClaude },
+  { info: geminiInfo, create: createGemini },
+];
+const HAS_SERVER_KEYS = PROVIDER_TYPES.some((t) => t.info.hasServerKey);
+
+const cleanKey = (k) => (typeof k === "string" ? k.trim().slice(0, 400) : "");
+
+// Visitor keys are used for this request only and never stored or logged.
+// If the visitor sends any key, server keys are NOT mixed in, so the owner's keys are never spent on their behalf.
+function buildProviders(apiKeys = {}) {
+  const visitor = { claude: cleanKey(apiKeys.claude), gemini: cleanKey(apiKeys.gemini) };
+  const usingVisitorKeys = Boolean(visitor.claude || visitor.gemini);
+  return PROVIDER_TYPES
+    .map(({ info, create }) => {
+      if (usingVisitorKeys) return visitor[info.id] ? create(visitor[info.id]) : null;
+      return create();
+    })
+    .filter(Boolean);
+}
 
 const app = express();
 app.use(express.json({ limit: "100kb" }));
@@ -22,10 +41,13 @@ function sender(res) {
 }
 
 app.get("/api/status", (_req, res) => {
+  const serverProviders = PROVIDER_TYPES.filter((t) => t.info.hasServerKey).map((t) => t.info);
   res.json({
-    live: PROVIDERS.length > 0,
-    model: PROVIDERS[0]?.model ?? null,
-    providers: PROVIDERS.map((p) => ({ id: p.id, label: p.label, model: p.model })),
+    live: HAS_SERVER_KEYS,
+    model: serverProviders[0]?.model ?? null,
+    providers: serverProviders.map((p) => ({ id: p.id, label: p.label, model: p.model })),
+    // Every provider the page can accept a visitor key for.
+    supported: PROVIDER_TYPES.map((t) => ({ id: t.info.id, label: t.info.label, model: t.info.model })),
   });
 });
 
@@ -34,10 +56,10 @@ app.get("/api/sample", (_req, res) => {
 });
 
 // Runs one pipeline step on each provider in order until one returns a usable result.
-async function withProviderFallback(step, run, send, signal) {
+async function withProviderFallback(providers, step, run, send, signal) {
   const failures = [];
-  for (let i = 0; i < PROVIDERS.length; i++) {
-    const p = PROVIDERS[i];
+  for (let i = 0; i < providers.length; i++) {
+    const p = providers[i];
     let reason;
     try {
       const result = await run(p);
@@ -49,7 +71,7 @@ async function withProviderFallback(step, run, send, signal) {
       reason = p.describeError(err);
     }
     failures.push(`${p.label}: ${reason}`);
-    const next = PROVIDERS[i + 1];
+    const next = providers[i + 1];
     if (next) send({ type: "progress", message: `⚠ ${p.label} failed (${reason}) — switching to ${next.label}...` });
   }
   const err = new Error(`All AI providers failed — ${failures.join(" · ")}`);
@@ -58,11 +80,11 @@ async function withProviderFallback(step, run, send, signal) {
 }
 
 app.post("/api/analyze", async (req, res) => {
-  if (!PROVIDERS.length) {
-    return res.status(503).json({ error: "No AI API key configured. Add ANTHROPIC_API_KEY and/or GEMINI_API_KEY to .env." });
+  const { business, location, industry, website, notes, apiKeys } = req.body || {};
+  const providers = buildProviders(apiKeys);
+  if (!providers.length) {
+    return res.status(400).json({ error: "Add your Claude or Gemini API key in the \"Your API keys\" section to run a live analysis." });
   }
-
-  const { business, location, industry, website, notes } = req.body || {};
   if (!business?.trim() || !location?.trim()) {
     return res.status(400).json({ error: "Business name and location are required." });
   }
@@ -90,9 +112,9 @@ app.post("/api/analyze", async (req, res) => {
 
   try {
     // ---------- Phase 1: live research with web search ----------
-    send({ type: "stage", stage: "research", message: `Researching the business and its local market (${PROVIDERS[0].label})...` });
+    send({ type: "stage", stage: "research", message: `Researching the business and its local market (${providers[0].label}${providers[0].usesVisitorKey ? ", your key" : ""})...` });
 
-    const researched = await withProviderFallback("research", async (p) => {
+    const researched = await withProviderFallback(providers, "research", async (p) => {
       const found = await p.research(brief, send, signal);
       return found.notesText.trim() ? found : null;
     }, send, signal);
@@ -109,7 +131,7 @@ app.post("/api/analyze", async (req, res) => {
     const sourceList = [...sources.values()].slice(0, 40)
       .map((s, i) => `[${i + 1}] ${s.title}`).join("\n");
 
-    const built = await withProviderFallback("report", async (p) => {
+    const built = await withProviderFallback(providers, "report", async (p) => {
       const report = await p.buildReport(brief, notesText, sourceList, send, signal);
       if (report || signal.aborted) return report;
       send({ type: "progress", message: "Report needed a second pass, retrying..." });
@@ -125,7 +147,7 @@ app.post("/api/analyze", async (req, res) => {
         ai: {
           research: `${researched.provider.label} (${researched.provider.model})`,
           report: `${built.provider.label} (${built.provider.model})`,
-          fallback_used: researched.provider !== PROVIDERS[0] || built.provider !== PROVIDERS[0],
+          fallback_used: researched.provider !== providers[0] || built.provider !== providers[0],
         },
         sources: [...sources.values()],
         generated_at: new Date().toISOString(),
@@ -144,10 +166,11 @@ app.post("/api/analyze", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Competitive Analysis running at http://localhost:${PORT}`);
-  if (PROVIDERS.length) {
-    console.log(`AI providers (in fallback order): ${PROVIDERS.map((p) => `${p.label} [${p.model}]`).join(" -> ")}`);
-    if (claude.enabled) console.log(`Claude max web searches: ${claude.maxSearches}`);
+  const serverProviders = PROVIDER_TYPES.filter((t) => t.info.hasServerKey).map((t) => t.info);
+  if (serverProviders.length) {
+    console.log(`Server AI keys (in fallback order): ${serverProviders.map((p) => `${p.label} [${p.model}]`).join(" -> ")}`);
   } else {
-    console.log("No ANTHROPIC_API_KEY or GEMINI_API_KEY found - the app will run in demo mode (sample report only).");
+    console.log("No server API keys - visitors must enter their own Claude/Gemini key in the page.");
   }
+  console.log(`Claude max web searches: ${claudeInfo.maxSearches}`);
 });

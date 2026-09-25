@@ -2,11 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { RESEARCH_SYSTEM, FORMAT_SYSTEM, REPORT_JSON_SCHEMA, researchPrompt, reportPrompt, parseReport } from "./shared.js";
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5";
-const API_KEY = process.env.ANTHROPIC_API_KEY;
+// Server key (local/private deployments). Visitors can also send their own key per request.
+const SERVER_KEY = process.env.ANTHROPIC_API_KEY;
 // Each web search adds its result pages to the input, so this is the main cost/time lever.
 const MAX_SEARCHES = Math.max(1, Number(process.env.MAX_WEB_SEARCHES) || 3);
-
-const ai = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
 // Overloaded or server-side failures are worth another try (the SDK already retries twice).
 const isOverloaded = (err) =>
@@ -30,7 +29,7 @@ async function withRetry(fn, send) {
   throw lastErr;
 }
 
-async function researchOnce(brief, useSearch, send, signal) {
+async function researchOnce(ai, brief, useSearch, send, signal) {
   const messages = [{ role: "user", content: researchPrompt(brief, useSearch, MAX_SEARCHES) }];
 
   const sources = new Map();
@@ -85,23 +84,23 @@ async function researchOnce(brief, useSearch, send, signal) {
   return { notesText, sources, searches };
 }
 
-async function research(brief, send, signal) {
+async function research(ai, brief, send, signal) {
   try {
-    const found = await withRetry(() => researchOnce(brief, true, send, signal), send);
+    const found = await withRetry(() => researchOnce(ai, brief, true, send, signal), send);
     return { ...found, liveSearch: true };
   } catch (err) {
     // Web search can be switched off for an organization in the Claude Console; plain calls still work.
     if (!(err instanceof Anthropic.BadRequestError && /web.?search/i.test(err.message))) throw err;
     console.warn("Claude web search unavailable. Falling back to model knowledge:", err.message);
     send({ type: "progress", message: "⚠ Web search isn't enabled for this Claude key — continuing with Claude's own knowledge (not live-verified)." });
-    const found = await withRetry(() => researchOnce(brief, false, send, signal), send);
+    const found = await withRetry(() => researchOnce(ai, brief, false, send, signal), send);
     return { ...found, liveSearch: false };
   }
 }
 
 // The report schema is too large for strict structured outputs (grammar size limit),
 // so the schema goes in the prompt and the JSON is validated with Zod afterwards.
-async function buildReportOnce(brief, notesText, sourceList, signal) {
+async function buildReportOnce(ai, brief, notesText, sourceList, signal) {
   const response = await ai.messages.stream({
     model: MODEL,
     max_tokens: 32000,
@@ -118,11 +117,11 @@ async function buildReportOnce(brief, notesText, sourceList, signal) {
   return report;
 }
 
-const buildReport = (brief, notesText, sourceList, send, signal) =>
-  withRetry(() => buildReportOnce(brief, notesText, sourceList, signal), send);
+const buildReport = (ai, brief, notesText, sourceList, send, signal) =>
+  withRetry(() => buildReportOnce(ai, brief, notesText, sourceList, signal), send);
 
 function describeError(err) {
-  if (err instanceof Anthropic.AuthenticationError) return "Invalid Anthropic API key (check ANTHROPIC_API_KEY in .env)";
+  if (err instanceof Anthropic.AuthenticationError) return "Invalid Anthropic API key";
   if (err instanceof Anthropic.PermissionDeniedError) return "This Anthropic key doesn't have access to this model or feature";
   if (err instanceof Anthropic.NotFoundError) return `Model "${MODEL}" not found (check CLAUDE_MODEL in .env)`;
   if (err instanceof Anthropic.RateLimitError) return "Claude rate limit / quota reached (429)";
@@ -131,14 +130,19 @@ function describeError(err) {
   return err.message || "Unexpected error";
 }
 
-export const claude = {
-  id: "claude",
-  label: "Claude",
-  model: MODEL,
-  enabled: Boolean(ai),
-  maxSearches: MAX_SEARCHES,
-  research,
-  buildReport,
-  describeError,
-  isAbort: (err) => err instanceof Anthropic.APIUserAbortError,
-};
+export const claudeInfo = { id: "claude", label: "Claude", model: MODEL, hasServerKey: Boolean(SERVER_KEY), maxSearches: MAX_SEARCHES };
+
+// Builds a provider bound to one API key: the visitor's key if given, otherwise the server's.
+export function createClaude(userKey) {
+  const apiKey = userKey || SERVER_KEY;
+  if (!apiKey) return null;
+  const ai = new Anthropic({ apiKey });
+  return {
+    ...claudeInfo,
+    usesVisitorKey: Boolean(userKey),
+    research: (brief, send, signal) => research(ai, brief, send, signal),
+    buildReport: (brief, notesText, sourceList, send, signal) => buildReport(ai, brief, notesText, sourceList, send, signal),
+    describeError,
+    isAbort: (err) => err instanceof Anthropic.APIUserAbortError,
+  };
+}

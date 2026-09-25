@@ -2,11 +2,10 @@ import { GoogleGenAI, ApiError, ThinkingLevel } from "@google/genai";
 import { RESEARCH_SYSTEM, FORMAT_SYSTEM, REPORT_JSON_OBJECT, researchPrompt, reportPrompt, parseReport } from "./shared.js";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
-const API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+// Server key (local/private deployments). Visitors can also send their own key per request.
+const SERVER_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 const RESEARCH_TIMEOUT_MS = 240_000;
 const REPORT_TIMEOUT_MS = 150_000;
-
-const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 const isOverloaded = (err) =>
   (err instanceof ApiError && [500, 503, 504].includes(err.status)) ||
@@ -29,7 +28,7 @@ async function withRetry(fn, send) {
   throw lastErr;
 }
 
-async function researchOnce(brief, useSearch, send, signal) {
+async function researchOnce(ai, brief, useSearch, send, signal) {
   const stream = await ai.models.generateContentStream({
     model: MODEL,
     contents: researchPrompt(brief, useSearch),
@@ -68,21 +67,21 @@ async function researchOnce(brief, useSearch, send, signal) {
   return { notesText, sources, searches: queries.size };
 }
 
-async function research(brief, send, signal) {
+async function research(ai, brief, send, signal) {
   try {
-    const found = await withRetry(() => researchOnce(brief, true, send, signal), send);
+    const found = await withRetry(() => researchOnce(ai, brief, true, send, signal), send);
     return { ...found, liveSearch: true };
   } catch (err) {
     // 429 on a grounded request usually means this key has no Google Search quota; plain calls still work.
     if (!(err instanceof ApiError && err.status === 429)) throw err;
     console.warn("Gemini Google Search rejected (429). Falling back to model knowledge:", err.message);
     send({ type: "progress", message: "⚠ Google Search isn't enabled for this Gemini key — continuing with Gemini's own knowledge (not live-verified)." });
-    const found = await withRetry(() => researchOnce(brief, false, send, signal), send);
+    const found = await withRetry(() => researchOnce(ai, brief, false, send, signal), send);
     return { ...found, liveSearch: false };
   }
 }
 
-async function buildReportOnce(brief, notesText, sourceList, signal) {
+async function buildReportOnce(ai, brief, notesText, sourceList, signal) {
   const response = await ai.models.generateContent({
     model: MODEL,
     contents: reportPrompt(brief, notesText, sourceList),
@@ -100,12 +99,12 @@ async function buildReportOnce(brief, notesText, sourceList, signal) {
   return response.text ? parseReport(response.text) : null;
 }
 
-const buildReport = (brief, notesText, sourceList, send, signal) =>
-  withRetry(() => buildReportOnce(brief, notesText, sourceList, signal), send);
+const buildReport = (ai, brief, notesText, sourceList, send, signal) =>
+  withRetry(() => buildReportOnce(ai, brief, notesText, sourceList, signal), send);
 
 function describeError(err) {
   if (err instanceof ApiError) {
-    if (err.status === 400 && /api key/i.test(err.message)) return "Invalid Gemini API key (check GEMINI_API_KEY in .env)";
+    if (err.status === 400 && /api key/i.test(err.message)) return "Invalid Gemini API key";
     if (err.status === 403) return "This Gemini key doesn't have access";
     if (err.status === 404) return `Gemini model "${MODEL}" not found (check GEMINI_MODEL in .env)`;
     if (err.status === 429) return "Gemini quota reached (429) — check your key's tier at https://aistudio.google.com/usage";
@@ -116,13 +115,19 @@ function describeError(err) {
   return err.message || "Unexpected error";
 }
 
-export const gemini = {
-  id: "gemini",
-  label: "Gemini",
-  model: MODEL,
-  enabled: Boolean(ai),
-  research,
-  buildReport,
-  describeError,
-  isAbort: (err) => err?.name === "AbortError",
-};
+export const geminiInfo = { id: "gemini", label: "Gemini", model: MODEL, hasServerKey: Boolean(SERVER_KEY) };
+
+// Builds a provider bound to one API key: the visitor's key if given, otherwise the server's.
+export function createGemini(userKey) {
+  const apiKey = userKey || SERVER_KEY;
+  if (!apiKey) return null;
+  const ai = new GoogleGenAI({ apiKey });
+  return {
+    ...geminiInfo,
+    usesVisitorKey: Boolean(userKey),
+    research: (brief, send, signal) => research(ai, brief, send, signal),
+    buildReport: (brief, notesText, sourceList, send, signal) => buildReport(ai, brief, notesText, sourceList, send, signal),
+    describeError,
+    isAbort: (err) => err?.name === "AbortError",
+  };
+}

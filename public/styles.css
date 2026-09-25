@@ -212,3 +212,15 @@ tr.is-target td:first-child { font-weight: 700; color: var(--accent); }
   body { background: #fff; }
   .card { box-shadow: none; break-inside: avoid; }
 }
+
+/* API keys (bring your own key) */
+.keys { border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; }
+.keys[open] { background: var(--surface-2); }
+.keys summary { margin-bottom: 0; }
+.keys[open] summary { margin-bottom: 8px; }
+.keys .opt a { font-weight: 600; }
+.keys-note { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
+.keys-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; cursor: pointer; }
+.check input { width: auto; }
+.keys-ok { color: var(--low, #1f9d62); }

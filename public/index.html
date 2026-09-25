@@ -47,6 +47,22 @@
         <summary>Add more context</summary>
         <textarea name="notes" rows="3" maxlength="1000" placeholder="e.g. We want to grow catering orders, main rivals we know of are X and Y, budget is small…"></textarea>
       </details>
+      <details class="more keys" id="keysBox">
+        <summary>🔑 Your API keys <span class="opt" id="keysState">required for live analysis</span></summary>
+        <p class="keys-note">Live analysis runs on <b>your own</b> API key. Add at least one — Claude is used first, Gemini takes over if Claude fails. Keys are sent over HTTPS for this analysis only and are <b>never stored on the server</b>.</p>
+        <div class="grid2">
+          <label>Claude API key <span class="opt"><a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">get one ↗</a></span>
+            <input id="claudeKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" maxlength="400" />
+          </label>
+          <label>Gemini API key <span class="opt"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">get one ↗</a></span>
+            <input id="geminiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Your Gemini key" maxlength="400" />
+          </label>
+        </div>
+        <div class="keys-actions">
+          <label class="check"><input type="checkbox" id="rememberKeys" /> Remember keys in this browser</label>
+          <button type="button" class="btn sm ghost" id="clearKeys">Clear keys</button>
+        </div>
+      </details>
       <div class="form-actions">
         <button class="btn primary" type="submit" id="submitBtn">Analyze competitors →</button>
         <button class="btn ghost" type="button" id="sampleBtn">View sample report</button>
