@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RivalScope — Competitive Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="#" id="homeLink">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M8 13l2-3 2 2 2-4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>RivalScope</span>
+    </a>
+    <div class="topbar-right">
+      <span class="pill" id="modePill">Checking…</span>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- SEARCH -->
+  <section id="searchView" class="hero">
+    <h1>Know your competitors <span class="grad">in minutes</span>.</h1>
+    <p class="lead">Enter any business and its location. We research the live web, find your real local competitors, score them side by side and build a marketing action plan.</p>
+
+    <form id="form" class="card form-card" autocomplete="off">
+      <div class="grid2">
+        <label>Business / brand name *
+          <input name="business" required placeholder="e.g. Joe's Pizza" maxlength="120" />
+        </label>
+        <label>Location *
+          <input name="location" required placeholder="e.g. Brooklyn, New York" maxlength="120" />
+        </label>
+        <label>Industry / category <span class="opt">optional</span>
+          <input name="industry" placeholder="e.g. Italian restaurant" maxlength="120" />
+        </label>
+        <label>Website <span class="opt">optional</span>
+          <input name="website" placeholder="e.g. joespizza.com" maxlength="200" />
+        </label>
+      </div>
+      <details class="more">
+        <summary>Add more context</summary>
+        <textarea name="notes" rows="3" maxlength="1000" placeholder="e.g. We want to grow catering orders, main rivals we know of are X and Y, budget is small…"></textarea>
+      </details>
+      <div class="form-actions">
+        <button class="btn primary" type="submit" id="submitBtn">Analyze competitors →</button>
+        <button class="btn ghost" type="button" id="sampleBtn">View sample report</button>
+      </div>
+      <p class="hint" id="modeHint"></p>
+    </form>
+
+    <div class="features">
+      <div><b>🔎 Live research</b><span>Real competitors found via web search</span></div>
+      <div><b>📊 Side-by-side scores</b><span>Price, quality, brand, digital, CX</span></div>
+      <div><b>🧭 SWOT & market gaps</b><span>Where rivals are weak</span></div>
+      <div><b>🚀 Action plan</b><span>Prioritized marketing moves</span></div>
+    </div>
+
+    <div id="recentWrap" class="recent hidden">
+      <h3>Recent analyses <span class="opt">saved in this browser</span></h3>
+      <div id="recentList" class="chips"></div>
+    </div>
+  </section>
+
+  <!-- PROGRESS -->
+  <section id="progressView" class="hidden">
+    <div class="card progress-card">
+      <div class="spinner"></div>
+      <h2 id="progressTitle">Analyzing…</h2>
+      <p class="muted" id="progressSub">This usually takes 1–3 minutes.</p>
+      <ol class="steps">
+        <li id="step-research" class="active">Researching business & competitors</li>
+        <li id="step-analysis">Scoring & building strategy</li>
+        <li id="step-done">Report ready</li>
+      </ol>
+      <div class="log" id="log"></div>
+      <button class="btn ghost" id="cancelBtn">Cancel</button>
+    </div>
+  </section>
+
+  <!-- REPORT -->
+  <section id="reportView" class="hidden"></section>
+</main>
+
+<footer class="wrap foot">RivalScope MVP · AI-generated analysis — verify key facts before making decisions.</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
